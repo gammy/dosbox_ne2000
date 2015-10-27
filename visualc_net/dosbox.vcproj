@@ -480,6 +480,9 @@
 				<File
 					RelativePath="..\src\hardware\mixer.cpp">
 				</File>
+ 				<File
+					RelativePath="..\src\hardware\ne2000.cpp">
+				</File>
 				<File
 					RelativePath="..\src\hardware\pci_bus.cpp">
 				</File>
@@ -833,6 +836,9 @@
 			</File>
 			<File
 				RelativePath="..\include\mouse.h">
+			</File>
+ 			<File
+				RelativePath="..\include\ne2000.h">
 			</File>
 			<File
 				RelativePath="..\include\paging.h">
