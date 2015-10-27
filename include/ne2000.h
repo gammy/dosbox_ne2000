@@ -209,14 +209,15 @@ typedef struct {
 
 class bx_ne2k_c  {
 public:
+
   bx_ne2k_c(void);
   ~bx_ne2k_c(void);
+
   virtual void init(void);
   virtual void reset(unsigned type);
 
 public:
   bx_ne2k_t s;
-
   /* TODO: Setup SDL */
   //eth_pktmover_c *ethdev;
 

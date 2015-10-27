@@ -6,6 +6,7 @@
 #include "dosbox.h"
 #include <string.h>
 #include <stdio.h>
+#include <unistd.h>
 #include "support.h"
 #include "inout.h"
 #include "setup.h"
@@ -46,11 +47,22 @@
 // Peter Grehan (grehan@iprg.nokia.com) coded all of this
 // NE2000/ether stuff.
 
+// Kristian Gunstone added dodgy suid code, and minor adjustments to
+// make Peter's 2010(ne2000_27_11_10.diff) patch build on a 2015(r3950) 
+// codebase.
+
 #include "ne2000.h"
 
 #define HAVE_REMOTE
 
 #include "pcap.h"
+
+// Placeholder for privelege drop/escalation
+uid_t orig_uid;
+
+void NE2000_PrivelegeEscalate(void);
+void NE2000_PrivelegeDrop(void);
+
 // Handle to WinPCap device
 pcap_t *adhandle = 0;
 static void NE2000_TX_Event(Bitu val);
@@ -252,7 +264,10 @@ bx_ne2k_c::write_cr(Bit32u value)
     // Send the packet to the system driver
 	/* TODO: Transmit packet */
     //BX_NE2K_THIS ethdev->sendpkt(& BX_NE2K_THIS s.mem[BX_NE2K_THIS s.tx_page_start*256 - BX_NE2K_MEMSTART], BX_NE2K_THIS s.tx_bytes);
+        NE2000_PrivelegeEscalate();
 	pcap_sendpacket(adhandle,&s.mem[s.tx_page_start*256 - BX_NE2K_MEMSTART], s.tx_bytes);
+        NE2000_PrivelegeDrop();
+
 	// some more debug
 	if (BX_NE2K_THIS s.tx_timer_active) {
       BX_PANIC(("CR write, tx timer still active"));
@@ -1376,6 +1391,14 @@ void bx_ne2k_c::init()
    //DEV_register_iowrite_handler(this, write_handler, addr, "ne2000 NIC", 3);
 
 
+  orig_uid = getuid();
+
+  /*
+  LOG_MSG("Original uid, euid, gid: %d, %d, %d", 
+  	  orig_uid, 
+	  orig_euid, 
+	  orig_gid);
+  */
   BX_INFO("port 0x%x/32 irq %d mac %02x:%02x:%02x:%02x:%02x:%02x",
            BX_NE2K_THIS s.base_address,
            BX_NE2K_THIS s.base_irq,
@@ -1408,6 +1431,26 @@ void bx_ne2k_c::init()
   reset(BX_RESET_HARDWARE);
 }
 
+void NE2000_PrivelegeEscalate(void)
+{
+#ifndef WIN32
+	// LOG_MSG("NE2000: privelege escalate");
+	if(setuid(0) != 0) {
+		LOG_MSG("NE2000: setuid(%d) failed", 0);
+	} 
+#endif
+}
+
+void NE2000_PrivelegeDrop(void)
+{
+#ifndef WIN32
+	//LOG_MSG("NE2000: privelege drop");
+	if(setuid(orig_uid) != 0) {
+		LOG_MSG("NE2000: setuid(%d) failed", orig_uid);
+	} 
+#endif
+}
+
 static void NE2000_TX_Event(Bitu val) {
 	theNE2kDevice->tx_timer();
 }
@@ -1416,15 +1459,19 @@ static void NE2000_Poller(void) {
 	int res;
 	struct pcap_pkthdr *header;
 	u_char *pkt_data;
+        NE2000_PrivelegeEscalate();
 //#if 0
 	while((res = pcap_next_ex( adhandle, &header, (const u_char **)&pkt_data)) > 0) {
 		//LOG_MSG("NE2000: Received %d bytes", header->len);
 		
 		// don't receive in loopback modes
-		if((theNE2kDevice->s.DCR.loop == 0) || (theNE2kDevice->s.TCR.loop_cntl != 0))
+		if((theNE2kDevice->s.DCR.loop == 0) || (theNE2kDevice->s.TCR.loop_cntl != 0)) {
+			NE2000_PrivelegeDrop();
 			return;
+		}
 		theNE2kDevice->rx_frame(pkt_data, header->len);
 	}
+        NE2000_PrivelegeDrop();
 //#endif
 }
 #ifdef WIN32
@@ -1590,6 +1637,8 @@ public:
 		if(currentdev->description) desc=currentdev->description;
 		LOG_MSG("Using Network interface:\n%s\n(%s)\n",currentdev->name,desc);
 		
+		NE2000_PrivelegeEscalate();
+
 		// attempt to open it
 #ifdef WIN32
 		if ( (adhandle= pcap_open(
@@ -1618,6 +1667,7 @@ public:
 				LOG_MSG("\nUnable to open the interface: %s.", errbuf);
         	pcap_freealldevs(alldevs);
 			load_success = false;
+			NE2000_PrivelegeDrop();
 			return;
 		}
 		pcap_freealldevs(alldevs);
@@ -1639,6 +1689,9 @@ public:
 			WriteHandler8[i].Install((i+theNE2kDevice->s.base_address),
 				dosbox_write,IO_MB|IO_MW);
 		}
+
+		NE2000_PrivelegeDrop();
+
 		TIMER_AddTickHandler(NE2000_Poller);
 	}	
 	
